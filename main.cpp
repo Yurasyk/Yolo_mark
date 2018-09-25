@@ -35,26 +35,27 @@
 
 using namespace cv;
 
-std::atomic<bool> right_button_click;
-std::atomic<bool> clear_marks;
+//std::atomic<bool> right_button_click;
+//std::atomic<bool> clear_marks;
 
 std::atomic<bool> show_help;
 std::atomic<bool> exit_flag(false);
 
 std::atomic<int> mark_line_width(2); // default mark line width is 2 pixels.
 const int MAX_MARK_LINE_WIDTH = 3;
-std::atomic<bool> show_mark_class(true);
+std::atomic<bool> show_mark_class(false);
 
 std::atomic<int> x_start, y_start;
 std::atomic<int> x_end, y_end;
 std::atomic<int> x_size, y_size;
-std::atomic<bool> draw_select, selected, undo;
+std::atomic<bool> draw_select, selected;
 
 std::atomic<int> add_id_img;
 Rect prev_img_rect(0, 0, 50, 100);
 Rect next_img_rect(1280 - 50, 0, 50, 100);
 
-
+std::atomic<float> distanceg, xcg, ycg;
+/*
 void callback_mouse_click(int event, int x, int y, int flags, void* user_data)
 {
     if (event == cv::EVENT_LBUTTONDBLCLK)
@@ -97,6 +98,50 @@ void callback_mouse_click(int event, int x, int y, int flags, void* user_data)
         x_end = max(x, 0);
         y_end = max(y, 0);
     }
+}*/
+
+void callback_mouse_click(int event, int x, int y, int flags, void* user_data)
+{
+	if (event == cv::EVENT_LBUTTONDBLCLK)
+	{
+		std::cout << "cv::EVENT_LBUTTONDBLCLK \n";
+	}
+	else if (event == cv::EVENT_LBUTTONDOWN)
+	{
+		draw_select = true;
+		selected = true;
+		x_start = x;
+		y_start = y;
+
+		if (prev_img_rect.contains(Point2i(x, y))) add_id_img = -1;
+		else if (next_img_rect.contains(Point2i(x, y))) add_id_img = 1;
+		else add_id_img = 0;
+		//std::cout << "cv::EVENT_LBUTTONDOWN \n";
+	}
+	else if (event == cv::EVENT_LBUTTONUP)
+	{
+		//x_size = abs(x - x_start);
+		//y_size = abs(y - y_start);
+		x_end = max(x, 0);
+		y_end = max(y, 0);
+		draw_select = false;
+		//selected = false;
+		//std::cout << "cv::EVENT_LBUTTONUP \n";
+	}
+	else if (event == cv::EVENT_RBUTTONDOWN)
+	{
+		//right_button_click = true;
+		//std::cout << "cv::EVENT_RBUTTONDOWN \n";
+	}
+	if (event == cv::EVENT_RBUTTONDBLCLK)
+	{
+		std::cout << "cv::EVENT_RBUTTONDBLCLK \n";
+	}
+	else if (event == cv::EVENT_MOUSEMOVE)
+	{
+		x_end = max(x, 0);
+		y_end = max(y, 0);
+	}
 }
 
 class comma : public std::numpunct<char> {
@@ -313,6 +358,7 @@ int main(int argc, char *argv[])
 		struct coord_t {
 			Rect_<float> abs_rect;
 			int id;
+			float xc, yc;
 		};
 		std::vector<coord_t> current_coord_vec;
 		Size current_img_size;
@@ -325,17 +371,17 @@ int main(int argc, char *argv[])
 		moveWindow(window_name, 0, 0);
 		setMouseCallback(window_name, callback_mouse_click);
 
-		bool next_by_click = false;
+		//bool next_by_click = false;
 		bool marks_changed = false;
 
 		int old_trackbar_value = -1, trackbar_value = 0;
 		std::string const trackbar_name = "image num";
 		int tb_res = createTrackbar(trackbar_name, window_name, &trackbar_value, image_list_count);
 
-		int old_current_obj_id = -1, current_obj_id = 0;
-		std::string const trackbar_name_2 = "object id";
-		int const max_object_id = (synset_txt.size() > 0) ? synset_txt.size() : 20;
-		int tb_res_2 = createTrackbar(trackbar_name_2, window_name, &current_obj_id, max_object_id);
+		//int old_current_obj_id = -1, current_obj_id = 0;
+		//std::string const trackbar_name_2 = "object id";
+		//int const max_object_id = (synset_txt.size() > 0) ? synset_txt.size() : 20;
+		//int tb_res_2 = createTrackbar(trackbar_name_2, window_name, &current_obj_id, max_object_id);
 
 
 		do {
@@ -369,6 +415,8 @@ int main(int argc, char *argv[])
 							float const relative_center_y = (float)(i.abs_rect.y + i.abs_rect.height / 2) / full_image_roi.rows;
 							float const relative_width = (float)i.abs_rect.width / full_image_roi.cols;
 							float const relative_height = (float)i.abs_rect.height / full_image_roi.rows;
+							float const x_quadrature = i.xc;
+							float const y_quadrature = i.yc;
 
 							if (relative_width <= 0) continue;
 							if (relative_height <= 0) continue;
@@ -377,7 +425,8 @@ int main(int argc, char *argv[])
 
 							ofs << i.id << " " <<
 								relative_center_x << " " << relative_center_y << " " <<
-								relative_width << " " << relative_height << std::endl;
+								relative_width << " " << relative_height << " " <<
+								x_quadrature << " " << y_quadrature << std::endl;
 						}
 						
 						// store [path/image name.jpg] to train.txt
@@ -431,13 +480,21 @@ int main(int argc, char *argv[])
 								coord.id = -1;
 								ss >> coord.id;
 								if (coord.id < 0) continue;
-								float relative_coord[4] = { -1, -1, -1, -1 };  // rel_center_x, rel_center_y, rel_width, rel_height                          
-								for (size_t i = 0; i < 4; i++) if(!(ss >> relative_coord[i])) continue;
-								for (size_t i = 0; i < 4; i++) if (relative_coord[i] < 0) continue;
+								float relative_coord[6] = { -1, -1, -1, -1, -1, -1};  // rel_center_x, rel_center_y, rel_width, rel_height, xc, yc                         
+								for (size_t i = 0; i < 6; i++) if(!(ss >> relative_coord[i])) continue;
+								for (size_t i = 0; i < 6; i++) if (relative_coord[i] < 0) continue;
 								coord.abs_rect.x = (relative_coord[0] - relative_coord[2] / 2) * (float)full_image_roi.cols;
 								coord.abs_rect.y = (relative_coord[1] - relative_coord[3] / 2) * (float)full_image_roi.rows;
 								coord.abs_rect.width = relative_coord[2] * (float)full_image_roi.cols;
 								coord.abs_rect.height = relative_coord[3] * (float)full_image_roi.rows;
+								if ((relative_coord[4] == -1) && (relative_coord[5] == -1)) {
+									coord.xc = 0;		//default values
+									coord.yc = 1;
+								}
+								else{
+									coord.xc = relative_coord[4];
+									coord.yc = relative_coord[5];
+								}
 
 								current_coord_vec.push_back(coord);
 							}
@@ -478,16 +535,16 @@ int main(int argc, char *argv[])
 				if (y_end < preview.rows && i == (x_end - prev_img_rect.width) / preview.cols) color = Scalar(250, 200, 200);
 				rectangle(frame, rect_dst, color, 2);
 			}
-
+			/*
 			if (undo) {
 				undo = false;
 				if(current_coord_vec.size() > 0) {
 					full_image.copyTo(full_image_roi);
 					current_coord_vec.pop_back();
 				}
-			}
-
-			if (selected)
+			}*/
+			/*
+			if (selected)				// is performed after end of selection of the current rectangle
 			{
 				selected = false;
 				full_image.copyTo(full_image_roi);
@@ -519,10 +576,59 @@ int main(int argc, char *argv[])
 
 					marks_changed = true;
 				}
+			}*/
+
+			if (selected)				// is performed on the mouse click
+			{
+				selected = false;
+				full_image.copyTo(full_image_roi);
+
+				if (y_end < preview.rows && x_end > prev_img_rect.width && x_end < (full_image.cols - prev_img_rect.width) &&
+					y_start < preview.rows)
+				{
+					int const i = (x_end - prev_img_rect.width) / preview.cols;
+					trackbar_value += i;
+				}
+				else if (y_end >= preview.rows)
+				{
+					//float closest_distance=std::sqrt(std::pow(full_image_roi.cols,2) + std::pow(full_image_roi.rows,2));
+					//float current_distance;
+					float distance;
+					//coord_t &detected_box= current_coord_vec.front();
+					coord_t *detected_box = nullptr;
+					//bool catched = false;
+					for (auto &i : current_coord_vec)
+					{
+						/*
+						current_distance = std::sqrt(std::pow(x_start - i.abs_rect.x + i.abs_rect.width / 2, 2) + std::pow(y_start - i.abs_rect.y + i.abs_rect.height / 2, 2));
+						if (current_distance < closest_distance) {
+							closest_distance = current_distance;
+							closest_box = i;
+						}			*/
+						//chkdsf = i.abs_rect.contains(Point2i(x_start, y_start - (int)prev_img_rect.height));
+						if (i.abs_rect.contains(Point2i(x_start, y_start - (int)prev_img_rect.height))) {
+							int sdf = 1;
+							detected_box = &i;
+						}
+					}
+
+					if (detected_box != nullptr) {
+						xcg = detected_box->abs_rect.x + detected_box->abs_rect.width / 2;
+						ycg = detected_box->abs_rect.y + detected_box->abs_rect.height / 2;
+						distanceg = std::sqrt(std::pow((x_start - (detected_box->abs_rect.x + detected_box->abs_rect.width / 2))/(detected_box->abs_rect.width / 2), 2) + std::pow((y_start - (int)prev_img_rect.height - (detected_box->abs_rect.y + detected_box->abs_rect.height / 2))/(detected_box->abs_rect.height / 2), 2));
+						distance = std::sqrt(std::pow((x_start - (detected_box->abs_rect.x + detected_box->abs_rect.width / 2)) / (detected_box->abs_rect.width / 2), 2) + std::pow((y_start - (int)prev_img_rect.height - (detected_box->abs_rect.y + detected_box->abs_rect.height / 2)) / (detected_box->abs_rect.height / 2), 2));
+						xcg = (x_start - (detected_box->abs_rect.x + detected_box->abs_rect.width / 2)) / (detected_box->abs_rect.width / 2) / distanceg;
+						ycg = (-(y_start - (int)prev_img_rect.height) + (detected_box->abs_rect.y + detected_box->abs_rect.height / 2)) / (detected_box->abs_rect.height / 2) /distanceg;
+						detected_box->xc = (x_start - (detected_box->abs_rect.x + detected_box->abs_rect.width / 2)) / (detected_box->abs_rect.width / 2) / distance;
+						detected_box->yc = (-(y_start - (int)prev_img_rect.height) + (detected_box->abs_rect.y + detected_box->abs_rect.height / 2)) / (detected_box->abs_rect.height / 2) / distance;
+					}
+
+					marks_changed = true;
+				}
 			}
 
-			std::string current_synset_name;
-			if (current_obj_id < synset_txt.size()) current_synset_name = "   - " + synset_txt[current_obj_id];
+			//std::string current_synset_name;
+			//if (current_obj_id < synset_txt.size()) current_synset_name = "   - " + synset_txt[current_obj_id];
 
 			if (show_mouse_coords) {
 				full_image.copyTo(full_image_roi);
@@ -549,8 +655,11 @@ int main(int argc, char *argv[])
 
 			if (draw_select)
 			{
-				if (add_id_img != 0) trackbar_value += add_id_img;
-
+				if (add_id_img != 0) {
+					trackbar_value += add_id_img;
+					add_id_img = 0;
+				}
+				/*
 				if (y_start >= preview.rows)
 				{
 					//full_image.copyTo(full_image_roi);
@@ -564,17 +673,17 @@ int main(int argc, char *argv[])
 						putText(frame, std::to_string(current_obj_id) + current_synset_name,
 							selected_rect.tl() + Point2i(2, 22), FONT_HERSHEY_SIMPLEX, 0.8, Scalar(150, 200, 150), 2);
 					}
-				}
+				}*/
 			}
-
+			/*
 			if (clear_marks == true)
 			{
 				clear_marks = false;
 				marks_changed = true;
 				full_image.copyTo(full_image_roi);
 				current_coord_vec.clear();
-			}
-
+			}*/
+			/*
 			if (right_button_click == true)
 			{
 				right_button_click = false;
@@ -587,17 +696,17 @@ int main(int argc, char *argv[])
 					full_image.copyTo(full_image_roi);
 					current_coord_vec.clear();
 				}
-			}
+			}*/
 
-
+			/*
 			if (old_current_obj_id != current_obj_id)
 			{
 				full_image.copyTo(full_image_roi);
 				old_current_obj_id = current_obj_id;
-				setTrackbarPos(trackbar_name_2, window_name, current_obj_id);
-			}
+				//setTrackbarPos(trackbar_name_2, window_name, current_obj_id);
+			}*/
 
-
+			// visualization of current rectangles
 			for (auto &i : current_coord_vec)
 			{
 				std::string synset_name;
@@ -616,9 +725,13 @@ int main(int argc, char *argv[])
 				}
 
 				rectangle(full_image_roi, i.abs_rect, color_rect, mark_line_width);
+
+				Scalar color_line(0, 0, 255);
+				//i.abs_rect.x + i.abs_rect.width / 2, 2) + std::pow(y_start - i.abs_rect.y + i.abs_rect.height / 2
+				line(full_image_roi, Point2i(i.abs_rect.x + i.abs_rect.width / 2, i.abs_rect.y + i.abs_rect.height / 2), Point2i(i.abs_rect.x + i.abs_rect.width / 2 + i.xc * i.abs_rect.width / 2, i.abs_rect.y + i.abs_rect.height / 2 - i.yc * i.abs_rect.height / 2), color_line, mark_line_width);
 			}
 
-
+			/*
 			if (next_by_click)
 				putText(full_image_roi, "Mode: 1 mark per image (next by click)",
 					Point2i(850, 20), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(50, 170, 100), 2);
@@ -629,15 +742,15 @@ int main(int argc, char *argv[])
 				putText(full_image_roi, obj_str, Point2i(0, 21), FONT_HERSHEY_DUPLEX, 0.8, Scalar(10, 50, 10), 3);
 				putText(full_image_roi, obj_str, Point2i(0, 21), FONT_HERSHEY_DUPLEX, 0.8, Scalar(20, 120, 60), 2);
 				putText(full_image_roi, obj_str, Point2i(0, 21), FONT_HERSHEY_DUPLEX, 0.8, Scalar(50, 200, 100), 1);
-			}
+			}*/
 
 			if (show_help)
 			{
 				putText(full_image_roi,
-					"<- prev_img     -> next_img     space - next_img     c - clear_marks     n - one_object_per_img    0-9 - obj_id",
+					"<- prev_img     -> next_img     space - next_img",
 					Point2i(0, 45), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(50, 10, 10), 2);
 				putText(full_image_roi,
-					"ESC - exit   w - line width   k - hide obj_name   z - undo", //   h - disable help",
+					"ESC - exit   w - line width   k - hide obj_name", //   h - disable help",
 					Point2i(0, 80), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(50, 10, 10), 2);
 			}
 			else
@@ -684,15 +797,15 @@ int main(int argc, char *argv[])
 			if (exit_flag) break;	// exit after saving
 			if (pressed_key == 27 || pressed_key == 1048603) exit_flag = true;// break;  // ESC - save & exit
 
-			if (pressed_key >= '0' && pressed_key <= '9') current_obj_id = pressed_key - '0';   // 0 - 9
-			if (pressed_key >= 1048624 && pressed_key <= 1048633) current_obj_id = pressed_key - 1048624;   // 0 - 9
+			//if (pressed_key >= '0' && pressed_key <= '9') current_obj_id = pressed_key - '0';   // 0 - 9
+			//if (pressed_key >= 1048624 && pressed_key <= 1048633) current_obj_id = pressed_key - 1048624;   // 0 - 9
 
 			switch (pressed_key)
 			{
-			case 'z':		// z
-			case 1048698:	// z
-			    undo = true;
-				break;
+			//case 'z':		// z
+			//case 1048698:	// z
+			//    undo = true;
+			//	break;
 
 			case 32:        // SPACE
 			case 1048608:	// SPACE
@@ -709,20 +822,20 @@ int main(int argc, char *argv[])
 			case 93:		// ]
 				++trackbar_value;
 				break;
-			case 'c':       // c
-			case 1048675:	// c
-				clear_marks = true;
-				break;
+			//case 'c':       // c
+			//case 1048675:	// c
+			//	clear_marks = true;
+			//	break;
 			case 'm':		// m
 			case 1048685:   // m
 				show_mouse_coords = !show_mouse_coords;
 				full_image.copyTo(full_image_roi);
 				break;
-			case 'n':       // n
-			case 1048686:   // n
-				next_by_click = !next_by_click;
-				full_image.copyTo(full_image_roi);
-				break;
+			//case 'n':       // n
+			//case 1048686:   // n
+			//	next_by_click = !next_by_click;
+			//	full_image.copyTo(full_image_roi);
+			//	break;
 			case 'w':       // w
 			case 1048695:   // w
 				mark_line_width = mark_line_width % MAX_MARK_LINE_WIDTH + 1;
